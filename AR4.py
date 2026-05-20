@@ -134,6 +134,7 @@ from threading import Lock, Thread
 from queue import Queue
 
 import time
+import csv
 
 from functools import partial
 import ctypes
@@ -196,6 +197,26 @@ Config = AR4_Configuration()
 CE = Config.Environment
 CAL = Config.Calibration
 RUN = Config.RuntimeState # Not implemented yet
+
+LOG = {
+    'active': False,
+    'file': None,
+    'writer': None,
+    'start_time': 0
+}
+
+def startLog():
+    LOG['start_time'] = time.time()
+    LOG['file'] = open('robot_log.csv', 'w', newline='')
+    LOG['writer'] = csv.writer(LOG['file'])
+    LOG['writer'].writerow(['timestamp_s','J1','J2','J3','J4','J5','J6','X','Y','Z'])
+    LOG['active'] = True
+
+def stopLog():
+    LOG['active'] = False
+    if LOG['file']:
+        LOG['file'].close()
+        LOG['file'] = None
 
 if CE['Platform']['IS_WINDOWS']:
   from pygrabber.dshow_graph import FilterGraph
@@ -9067,6 +9088,17 @@ def displayPosition(response):
   manEntryField.insert(0,Debug)
 
   save_calibration(CAL)
+
+  if LOG['active'] and LOG['writer']:
+    t = round(time.time() - LOG['start_time'], 4)
+    LOG['writer'].writerow([
+        t,
+        CAL['J1AngCur'], CAL['J2AngCur'], CAL['J3AngCur'],
+        CAL['J4AngCur'], CAL['J5AngCur'], CAL['J6AngCur'],
+        CAL['XcurPos'], CAL['YcurPos'], CAL['ZcurPos']
+    ])
+    LOG['file'].flush()
+
   if (Flag != ""):
       ErrorHandler(Flag) 
   if (SpeedVioation=='1'):
@@ -12998,6 +13030,11 @@ J5OpenLoopCbut.grid(row=4, column=0, sticky="w", padx=5, pady=2)
 J6OpenLoopCbut = Checkbutton(encoderFrame, text="J6 Open Loop (disable encoder)", variable=CAL['J6OpenLoopVal'])
 J6OpenLoopCbut.grid(row=5, column=0, sticky="w", padx=5, pady=2)
 
+# CSV Data Logging
+startLogBut = Button(encoderFrame, text="Start Log", bg="green", fg="white", width=12, command=startLog)
+startLogBut.grid(row=6, column=0, sticky="w", padx=5, pady=(10,2))
+stopLogBut = Button(encoderFrame, text="Stop Log", bg="red", fg="white", width=12, command=stopLog)
+stopLogBut.grid(row=7, column=0, sticky="w", padx=5, pady=2)
 
 
 # ============================================================================
