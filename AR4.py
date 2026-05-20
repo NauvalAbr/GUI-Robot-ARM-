@@ -10958,6 +10958,7 @@ def GCconvertProg():
       RUN['prevzVal'] = 0
       RUN['GCstopQueue'] = "0"
       RUN['splineActive'] = "0"
+      startLog()
       try:
         GCselRow = tab7.gcodeView.curselection()[0]
         if (GCselRow == 0):
@@ -11012,6 +11013,7 @@ def GCstopProg():
     lastProg = ""
     tab7.GCrunTrue = 0
     GCalmStatusLab.config(text="GCODE CONVERSION STOPPED",  style="Alarm.TLabel")
+    stopLog()
     if(RUN['splineActive'] ==1):
       RUN['splineActive'] = "0"
       if(RUN['stopQueue'] == "1"):
