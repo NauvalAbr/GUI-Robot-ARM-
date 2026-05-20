@@ -205,7 +205,26 @@ LOG = {
     'start_time': 0
 }
 
+def _log_poller():
+    prev = None
+    while LOG['active']:
+        j1 = CAL.get('J1AngCur', '')
+        if j1 != '' and LOG['writer']:
+            cur = (j1, CAL.get('J2AngCur',''), CAL.get('J3AngCur',''),
+                   CAL.get('J4AngCur',''), CAL.get('J5AngCur',''), CAL.get('J6AngCur',''))
+            if cur != prev:
+                t = round(time.time() - LOG['start_time'], 4)
+                LOG['writer'].writerow([
+                    t, cur[0], cur[1], cur[2], cur[3], cur[4], cur[5],
+                    CAL.get('XcurPos',''), CAL.get('YcurPos',''), CAL.get('ZcurPos','')
+                ])
+                LOG['file'].flush()
+                prev = cur
+        time.sleep(0.1)
+
 def startLog():
+    if LOG['active']:
+        return
     log_dir = os.path.join(DIR, 'robot_logs')
     os.makedirs(log_dir, exist_ok=True)
     timestamp = time.strftime('%Y-%m-%d_%H-%M-%S')
@@ -215,9 +234,11 @@ def startLog():
     LOG['writer'] = csv.writer(LOG['file'])
     LOG['writer'].writerow(['timestamp_s','J1','J2','J3','J4','J5','J6','X','Y','Z'])
     LOG['active'] = True
+    threading.Thread(target=_log_poller, daemon=True).start()
 
 def stopLog():
     LOG['active'] = False
+    time.sleep(0.15)
     if LOG['file']:
         LOG['file'].close()
         LOG['file'] = None
@@ -9095,16 +9116,6 @@ def displayPosition(response):
 
   save_calibration(CAL)
 
-  if LOG['active'] and LOG['writer']:
-    t = round(time.time() - LOG['start_time'], 4)
-    LOG['writer'].writerow([
-        t,
-        CAL['J1AngCur'], CAL['J2AngCur'], CAL['J3AngCur'],
-        CAL['J4AngCur'], CAL['J5AngCur'], CAL['J6AngCur'],
-        CAL['XcurPos'], CAL['YcurPos'], CAL['ZcurPos']
-    ])
-    LOG['file'].flush()
-
   if (Flag != ""):
       ErrorHandler(Flag) 
   if (SpeedVioation=='1'):
@@ -10912,23 +10923,25 @@ def GCplay():
 def GCplayProg(Filename):
   GCalmStatusLab.config(text= "GCODE FILE RUNNING",  style="OK.TLabel")
   def GCthreadPlay():
-    #global estopActive
     Fn = Filename + ".txt"
     command = "PG"+"Fn"+Fn+"\n"
     cmdSentEntryField.delete(0, 'end')
     cmdSentEntryField.insert(0,command)
+    startLog()
     RUN['ser'].write(command.encode())
     RUN['ser'].flushInput()
     time.sleep(.1)
     response = str(RUN['ser'].readline().strip(),'utf-8')
     if (response[:1] == 'E'):
-      ErrorHandler(response)   
+      ErrorHandler(response)
+      stopLog()
     else:
       displayPosition(response)
+      stopLog()
       if (RUN['estopActive']):
         GCalmStatusLab.config(text= "Estop Button was Pressed",  style="Alarm.TLabel")
-      else:  
-        GCalmStatusLab.config(text= "GCODE FILE COMPLETE",  style="Warn.TLabel") 
+      else:
+        GCalmStatusLab.config(text= "GCODE FILE COMPLETE",  style="Warn.TLabel")
   GCplay = threading.Thread(target=GCthreadPlay)
   GCplay.start()   
 
