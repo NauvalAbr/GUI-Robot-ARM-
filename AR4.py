@@ -206,8 +206,12 @@ LOG = {
 }
 
 def startLog():
+    log_dir = os.path.join(DIR, 'robot_logs')
+    os.makedirs(log_dir, exist_ok=True)
+    timestamp = time.strftime('%Y-%m-%d_%H-%M-%S')
+    log_path = os.path.join(log_dir, f'robot_log_{timestamp}.csv')
     LOG['start_time'] = time.time()
-    LOG['file'] = open('robot_log.csv', 'w', newline='')
+    LOG['file'] = open(log_path, 'w', newline='')
     LOG['writer'] = csv.writer(LOG['file'])
     LOG['writer'].writerow(['timestamp_s','J1','J2','J3','J4','J5','J6','X','Y','Z'])
     LOG['active'] = True
