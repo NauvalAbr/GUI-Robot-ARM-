@@ -1,0 +1,32 @@
+## SQUARE TRAJECTORY 100x100mm ##
+## Tool orientation: pointing down (Ry=-180) ##
+## Adjust X,Y,Z coordinates to match your robot workspace ##
+
+## 1. Move to home position first ##
+Move R [*] J1 0.000 J2 0.000 J3 0.000 J4 0.000 J5 45.00 J6 0.000 J7 0.00 J8 0.00 J9 0.00 Sp 25 Ac 15 Dc 15 Rm 80 $ F
+
+## 2. Move above corner 1 - safe height ##
+Move J [*] X 300.000 Y 50.000 Z 250.000 Rz 0.000 Ry -180.000 Rx 0.000 J7 0.00 J8 0.00 J9 0.00 Sp 25 Ac 15 Dc 15 Rm 80 $ F
+
+## 3. Corner 1 - top left (start of square) ##
+Move J [*] X 300.000 Y 50.000 Z 200.000 Rz 0.000 Ry -180.000 Rx 0.000 J7 0.00 J8 0.00 J9 0.00 Sp 15 Ac 10 Dc 10 Rm 80 $ F
+
+## 4. Corner 2 - top right ##
+Move J [*] X 400.000 Y 50.000 Z 200.000 Rz 0.000 Ry -180.000 Rx 0.000 J7 0.00 J8 0.00 J9 0.00 Sp 15 Ac 10 Dc 10 Rm 80 $ F
+
+## 5. Corner 3 - bottom right ##
+Move J [*] X 400.000 Y -50.000 Z 200.000 Rz 0.000 Ry -180.000 Rx 0.000 J7 0.00 J8 0.00 J9 0.00 Sp 15 Ac 10 Dc 10 Rm 80 $ F
+
+## 6. Corner 4 - bottom left ##
+Move J [*] X 300.000 Y -50.000 Z 200.000 Rz 0.000 Ry -180.000 Rx 0.000 J7 0.00 J8 0.00 J9 0.00 Sp 15 Ac 10 Dc 10 Rm 80 $ F
+
+## 7. Back to corner 1 - close the square ##
+Move J [*] X 300.000 Y 50.000 Z 200.000 Rz 0.000 Ry -180.000 Rx 0.000 J7 0.00 J8 0.00 J9 0.00 Sp 15 Ac 10 Dc 10 Rm 80 $ F
+
+## 8. Lift up - safe height ##
+Move J [*] X 300.000 Y 50.000 Z 250.000 Rz 0.000 Ry -180.000 Rx 0.000 J7 0.00 J8 0.00 J9 0.00 Sp 25 Ac 15 Dc 15 Rm 80 $ F
+
+## 9. Return to home ##
+Move R [*] J1 0.000 J2 0.000 J3 0.000 J4 0.000 J5 45.00 J6 0.000 J7 0.00 J8 0.00 J9 0.00 Sp 25 Ac 15 Dc 15 Rm 80 $ F
+
+Stop Program
