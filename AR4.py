@@ -10963,6 +10963,10 @@ def GCconvertProg():
       RUN['GCstopQueue'] = "0"
       RUN['splineActive'] = "0"
       startLog()
+      gc_start_time = time.time()
+      gc_total_lines = tab7.gcodeView.index('end')
+      GCprogressLab.config(text=f"Baris: 0 / {gc_total_lines}  (0%)")
+      GCtimeLab.config(text="Waktu: 00:00")
       try:
         GCselRow = tab7.gcodeView.curselection()[0]
         if (GCselRow == 0):
@@ -10999,9 +11003,14 @@ def GCconvertProg():
           GCselRow = tab7.gcodeView.curselection()[0]
           GcodCurRowEntryField.delete(0, 'end')
           GcodCurRowEntryField.insert(0,GCselRow)
+          elapsed = int(time.time() - gc_start_time)
+          mins, secs = divmod(elapsed, 60)
+          pct = int(GCselRow / gc_total_lines * 100) if gc_total_lines > 0 else 0
+          GCprogressLab.config(text=f"Baris: {GCselRow} / {gc_total_lines}  ({pct}%)")
+          GCtimeLab.config(text=f"Waktu: {mins:02d}:{secs:02d}")
         except:
           GcodCurRowEntryField.delete(0, 'end')
-          GcodCurRowEntryField.insert(0,"---") 
+          GcodCurRowEntryField.insert(0,"---")
           tab7.GCrunTrue = 0
           GCalmStatusLab.config(text="GCODE CONVERSION STOPPED",  style="Alarm.TLabel")
     GCt = threading.Thread(target=GCthreadProg)
@@ -11017,6 +11026,8 @@ def GCstopProg():
     lastProg = ""
     tab7.GCrunTrue = 0
     GCalmStatusLab.config(text="GCODE CONVERSION STOPPED",  style="Alarm.TLabel")
+    GCprogressLab.config(text="Baris: - / -  (0%)")
+    GCtimeLab.config(text="Waktu: 00:00")
     stopLog()
     if(RUN['splineActive'] ==1):
       RUN['splineActive'] = "0"
@@ -11266,8 +11277,7 @@ def GCexecuteRow():
 
       Rounding = "0"
       RUN['WC'] = GC_ST_WC_EntryField.get()
-      #LoopMode = str(CAL['J1OpenLoopVal'].get())+str(CAL['J2OpenLoopVal'].get())+str(CAL['J3OpenLoopVal'].get())+str(CAL['J4OpenLoopVal'].get())+str(CAL['J5OpenLoopVal'].get())+str(CAL['J6OpenLoopVal'].get())
-      LoopMode ="111111"
+      LoopMode = str(CAL['J1OpenLoopVal'].get())+str(CAL['J2OpenLoopVal'].get())+str(CAL['J3OpenLoopVal'].get())+str(CAL['J4OpenLoopVal'].get())+str(CAL['J5OpenLoopVal'].get())+str(CAL['J6OpenLoopVal'].get())
       #DisWrist = str(CAL['DisableWristRotVal'].get())
       Filename = GcodeFilenameField.get() + ".txt"
 
@@ -15435,6 +15445,12 @@ GcodeFilenameField.place(x=20, y=340)
 
 GCalmStatusLab = Label(tab7, text = "GCODE IDLE", style="OK.TLabel")
 GCalmStatusLab.place(x=400, y=20)
+
+GCprogressLab = Label(tab7, text="Baris: - / -  (0%)", style="OK.TLabel")
+GCprogressLab.place(x=700, y=20)
+
+GCtimeLab = Label(tab7, text="Waktu: 00:00", style="OK.TLabel")
+GCtimeLab.place(x=980, y=20)
 
 
 gcodeframe=Frame(tab7)
