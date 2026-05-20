@@ -2336,6 +2336,7 @@ def runProg():
     RUN['posOutreach'] = False
     RUN['stopQueue'] = "0"
     RUN['splineActive'] = "0"
+    startLog()
 
     last = tab1.progView.index('end')
     for row in range (0,last):
@@ -2542,12 +2543,13 @@ def stopProg():
   elif (RUN['posOutreach']):
     almStatusLab.config(text="Position Out of Reach",  style="Alarm.TLabel")
     almStatusLab2.config(text="Position Out of Reach",  style="Alarm.TLabel")    
-  else:        
+  else:
     almStatusLab.config(text="PROGRAM STOPPED",  style="Alarm.TLabel")
     almStatusLab2.config(text="PROGRAM STOPPED",  style="Alarm.TLabel")
 
-  
-  
+  stopLog()
+
+
 def executeRow():
   RUN['progRunning'] = True
   try:
