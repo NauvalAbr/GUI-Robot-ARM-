@@ -13031,9 +13031,9 @@ J6OpenLoopCbut = Checkbutton(encoderFrame, text="J6 Open Loop (disable encoder)"
 J6OpenLoopCbut.grid(row=5, column=0, sticky="w", padx=5, pady=2)
 
 # CSV Data Logging
-startLogBut = Button(encoderFrame, text="Start Log", bg="green", fg="white", width=12, command=startLog)
+startLogBut = Button(encoderFrame, text="Start Log", bootstyle="success", width=12, command=startLog)
 startLogBut.grid(row=6, column=0, sticky="w", padx=5, pady=(10,2))
-stopLogBut = Button(encoderFrame, text="Stop Log", bg="red", fg="white", width=12, command=stopLog)
+stopLogBut = Button(encoderFrame, text="Stop Log", bootstyle="danger", width=12, command=stopLog)
 stopLogBut.grid(row=7, column=0, sticky="w", padx=5, pady=2)
 
 
