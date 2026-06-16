@@ -328,6 +328,9 @@ nb.add(tab7, text='    G-Code     ')
 tab8 = ttk_bootstrap.Frame(nb)
 nb.add(tab8, text='      Log      ')
 
+tabForce = ttk_bootstrap.Frame(nb)
+nb.add(tabForce, text='     Force     ')
+
 tab9 = ttk_bootstrap.Frame(nb)
 #nb.add(tab9, text='   Info    ')
 
@@ -10930,18 +10933,26 @@ def GCplayProg(Filename):
     startLog()
     RUN['ser'].write(command.encode())
     RUN['ser'].flushInput()
-    time.sleep(.1)
-    response = str(RUN['ser'].readline().strip(),'utf-8')
-    if (response[:1] == 'E'):
-      ErrorHandler(response)
-      stopLog()
+    # Baca semua response per-gerakan sampai idle 15 detik
+    RUN['ser'].timeout = 0.1
+    last_rx = time.time()
+    idle_limit = 15
+    while time.time() - last_rx < idle_limit:
+      line = RUN['ser'].readline()
+      if line:
+        last_rx = time.time()
+        response = str(line.strip(), 'utf-8')
+        if response[:1] == 'E':
+          ErrorHandler(response)
+          break
+        if response:
+          displayPosition(response)
+    RUN['ser'].timeout = None
+    stopLog()
+    if (RUN['estopActive']):
+      GCalmStatusLab.config(text= "Estop Button was Pressed",  style="Alarm.TLabel")
     else:
-      displayPosition(response)
-      stopLog()
-      if (RUN['estopActive']):
-        GCalmStatusLab.config(text= "Estop Button was Pressed",  style="Alarm.TLabel")
-      else:
-        GCalmStatusLab.config(text= "GCODE FILE COMPLETE",  style="Warn.TLabel")
+      GCalmStatusLab.config(text= "GCODE FILE COMPLETE",  style="Warn.TLabel")
   GCplay = threading.Thread(target=GCthreadPlay)
   GCplay.start()   
 
@@ -16020,6 +16031,145 @@ RUN['xboxUse'] = 0
 tab1.lastProg = ""
 tab1.after(100, setCom)
 
+
+###############################################################################################################################################################
+# FORCE TAB
+###############################################################################################################################################################
+
+forceRawValue = StringVar(value="0")
+forceGramValue = StringVar(value="0.00")
+forceNewtonValue = StringVar(value="0.0000")
+forceStatusValue = StringVar(value="NO_DATA")
+forceAgeValue = StringVar(value="0")
+forceAckValue = StringVar(value="NONE")
+forceChecksumValue = StringVar(value="0")
+forceAutoPoll = IntVar(value=0)
+forceTargetValue = StringVar(value="5.00")
+forceKpValue = StringVar(value="0.050")
+forceMaxZValue = StringVar(value="2.00")
+
+
+def force_update_from_response(response):
+  parts = response.split(",")
+  if len(parts) >= 8 and parts[0] == "FZ":
+    forceRawValue.set(parts[1])
+    forceGramValue.set(parts[2])
+    forceNewtonValue.set(parts[3])
+    forceStatusValue.set(parts[4])
+    forceAgeValue.set(parts[5])
+    forceAckValue.set(parts[6])
+    forceChecksumValue.set(parts[7])
+
+
+def force_send_command(command, expect_force=False):
+  try:
+    if 'ser' not in RUN or RUN['ser'] is None or not RUN['ser'].is_open:
+      root.after(0, lambda: forceStatusValue.set("NO_COM"))
+      return
+    with serial_lock:
+      cmdSentEntryField.delete(0, 'end')
+      cmdSentEntryField.insert(0, command)
+      RUN['ser'].write(command.encode())
+      RUN['ser'].flush()
+      response = RUN['ser'].readline().decode("utf-8", errors="ignore").strip()
+    if response:
+      if response.startswith("FZ,"):
+        root.after(0, lambda r=response: force_update_from_response(r))
+      elif expect_force:
+        root.after(0, lambda r=response: forceAckValue.set(r))
+      else:
+        root.after(0, lambda r=response: forceAckValue.set(r))
+  except Exception as exc:
+    root.after(0, lambda e=str(exc): forceStatusValue.set("ERR"))
+    root.after(0, lambda e=str(exc): forceAckValue.set(e[:40]))
+
+
+def force_query_once():
+  threading.Thread(target=force_send_command, args=("FQ\n", True), daemon=True).start()
+
+
+def force_send_simple(command):
+  threading.Thread(target=force_send_command, args=(command, False), daemon=True).start()
+
+
+def force_tare():
+  force_send_simple("FT\n")
+
+
+def force_calibrate():
+  known = forceKnownWeightEntry.get().strip()
+  if known:
+    force_send_simple("FC" + known + "\n")
+
+
+def force_set_factor():
+  factor = forceFactorEntry.get().strip()
+  if factor:
+    force_send_simple("FF" + factor + "\n")
+
+
+def force_stream_on():
+  force_send_simple("FP1\n")
+
+
+def force_stream_off():
+  force_send_simple("FP0\n")
+
+
+def force_erase():
+  force_send_simple("FE\n")
+
+
+def force_auto_poll_tick():
+  if forceAutoPoll.get() == 1:
+    force_query_once()
+  root.after(250, force_auto_poll_tick)
+
+
+for idx in range(6):
+  tabForce.grid_columnconfigure(idx, weight=1)
+
+ttk_bootstrap.Label(tabForce, text="Raw").grid(row=0, column=0, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Label(tabForce, textvariable=forceRawValue, width=18).grid(row=0, column=1, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Label(tabForce, text="Gram").grid(row=1, column=0, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Label(tabForce, textvariable=forceGramValue, width=18).grid(row=1, column=1, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Label(tabForce, text="Newton").grid(row=2, column=0, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Label(tabForce, textvariable=forceNewtonValue, width=18).grid(row=2, column=1, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Label(tabForce, text="Status").grid(row=3, column=0, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Label(tabForce, textvariable=forceStatusValue, width=18).grid(row=3, column=1, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Label(tabForce, text="Age ms").grid(row=4, column=0, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Label(tabForce, textvariable=forceAgeValue, width=18).grid(row=4, column=1, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Label(tabForce, text="Ack").grid(row=5, column=0, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Label(tabForce, textvariable=forceAckValue, width=28).grid(row=5, column=1, columnspan=2, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Label(tabForce, text="XOR errors").grid(row=6, column=0, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Label(tabForce, textvariable=forceChecksumValue, width=18).grid(row=6, column=1, sticky="w", padx=8, pady=6)
+
+ttk_bootstrap.Button(tabForce, text="Refresh", command=force_query_once, width=14).grid(row=0, column=3, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Checkbutton(tabForce, text="Auto", variable=forceAutoPoll).grid(row=0, column=4, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Button(tabForce, text="Tare", command=force_tare, width=14).grid(row=1, column=3, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Button(tabForce, text="Stream On", command=force_stream_on, width=14).grid(row=2, column=3, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Button(tabForce, text="Stream Off", command=force_stream_off, width=14).grid(row=3, column=3, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Button(tabForce, text="Erase Cal", command=force_erase, width=14).grid(row=4, column=3, sticky="w", padx=8, pady=6)
+
+ttk_bootstrap.Label(tabForce, text="Known gram").grid(row=8, column=0, sticky="w", padx=8, pady=6)
+forceKnownWeightEntry = ttk_bootstrap.Entry(tabForce, width=14)
+forceKnownWeightEntry.insert(0, "1000")
+forceKnownWeightEntry.grid(row=8, column=1, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Button(tabForce, text="Calibrate", command=force_calibrate, width=14).grid(row=8, column=3, sticky="w", padx=8, pady=6)
+
+ttk_bootstrap.Label(tabForce, text="Scale factor").grid(row=9, column=0, sticky="w", padx=8, pady=6)
+forceFactorEntry = ttk_bootstrap.Entry(tabForce, width=14)
+forceFactorEntry.grid(row=9, column=1, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Button(tabForce, text="Set Factor", command=force_set_factor, width=14).grid(row=9, column=3, sticky="w", padx=8, pady=6)
+
+ttk_bootstrap.Label(tabForce, text="Target N").grid(row=11, column=0, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Entry(tabForce, textvariable=forceTargetValue, width=14).grid(row=11, column=1, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Label(tabForce, text="Kp").grid(row=12, column=0, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Entry(tabForce, textvariable=forceKpValue, width=14).grid(row=12, column=1, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Label(tabForce, text="Max Z mm").grid(row=13, column=0, sticky="w", padx=8, pady=6)
+ttk_bootstrap.Entry(tabForce, textvariable=forceMaxZValue, width=14).grid(row=13, column=1, sticky="w", padx=8, pady=6)
+
+force_auto_poll_tick()
 #tab1.mainloop()
 root.mainloop()
 
@@ -16032,4 +16182,5 @@ root.mainloop()
 # Serial Connection Monitoring
 RUN['ser_monitor_active'] = False
 RUN['ser_was_connected'] = False
+
 
