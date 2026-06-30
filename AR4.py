@@ -2193,7 +2193,9 @@ def setCom(misc=None):  # Requires an input parameter for element use / it's unu
     # Add small timeouts so reads/writes can’t hang forever
     RUN['ser'] = serial.Serial(
       port=CAL['comPort'],
-      baudrate=baud
+      baudrate=baud,
+      timeout=2,
+      write_timeout=2
     )
     logger.info("COMMUNICATIONS STARTED WITH TEENSY 4.1 CONTROLLER on Port %s", CAL['comPort'])
 
@@ -4676,263 +4678,354 @@ if CE['Platform']['IS_WINDOWS']:
       _lbl("Xbox ON / polling…", style="Warn.TLabel")
 
 else:
-  from inputs import get_gamepad
+  from inputs import get_gamepad, devices
+
+  def _safe_int_field(field, default=5):
+    try:
+      return int(float(field.get()))
+    except Exception:
+      return default
+
+  def _set_status(text, style="Warn.TLabel"):
+    almStatusLab.config(text=text, style=style)
+    almStatusLab2.config(text=text, style=style)
+
   def xbox():
-    def threadxbox():
-      # global RUN['xboxUse']
-      jogMode = 1
-      if RUN['xboxUse'] == 0:
-        RUN['xboxUse'] = 1
+    def ChgDis(val):
+      curSpd = _safe_int_field(incrementEntryField, 5)
+      if curSpd >=100 and val == 0:
+        curSpd = 100
+      elif curSpd < 5 and val == 0:
+        curSpd += 1
+      elif val == 0:
+        curSpd += 5
+      if curSpd <=1 and val == 1:
+        curSpd = 1
+      elif curSpd <= 5 and val == 1:
+        curSpd -= 1
+      elif val == 1:
+        curSpd -= 5
+      elif val == 2:
+        curSpd = 5
+      incrementEntryField.delete(0, 'end')
+      incrementEntryField.insert(0,str(curSpd))
+      time.sleep(.1)
+
+    def ChgSpd(val):
+      curSpd = _safe_int_field(speedEntryField, 20)
+      if curSpd >=100 and val == 0:
+        curSpd = 100
+      elif curSpd < 5 and val == 0:
+        curSpd += 1
+      elif val == 0:
+        curSpd += 5
+      if curSpd <=1 and val == 1:
+        curSpd = 1
+      elif curSpd <= 5 and val == 1:
+        curSpd -= 1
+      elif val == 1:
+        curSpd -= 5
+      elif val == 2:
+        curSpd = 5
+      speedEntryField.delete(0, 'end')
+      speedEntryField.insert(0,str(curSpd))
+
+    def _read_controller_events():
+      try:
+        return get_gamepad()
+      except Exception as e:
+        # Some generic HID/Android controllers are discovered but get_gamepad()
+        # cannot infer a path. Read first discovered gamepad directly.
+        if 'no path specified' in str(e) and devices.gamepads:
+          return devices.gamepads[0].read()
+        raise
+
+    def _button_name(code):
+      # Normalize common Linux evdev names across Xbox, PlayStation, Switch,
+      # 8BitDo, and Android-mode generic pads. Physical position wins.
+      return {
+        'BTN_A': 'south', 'BTN_SOUTH': 'south',
+        'BTN_B': 'east', 'BTN_EAST': 'east',
+        'BTN_X': 'west', 'BTN_WEST': 'west',
+        'BTN_Y': 'north', 'BTN_NORTH': 'north',
+        'BTN_TL': 'lb', 'BTN_LEFT': 'lb',
+        'BTN_TR': 'rb', 'BTN_RIGHT': 'rb',
+        'BTN_TL2': 'lt_btn', 'BTN_TR2': 'rt_btn',
+        'BTN_SELECT': 'select', 'BTN_BACK': 'select', 'BTN_BASE3': 'select',
+        'BTN_START': 'start', 'BTN_BASE4': 'start',
+        'BTN_THUMBL': 'lstick', 'BTN_THUMBR': 'rstick',
+        'BTN_MODE': 'home',
+      }.get(code)
+
+    def _axis_dir(code, state):
+      # Return ('dpad_x'/'dpad_y'/'lt'/'rt', direction/value) for common HID axes.
+      # D-pad may be -1/0/1. Analog hats/sticks may be 0..255, -32768..32767,
+      # or 0..1023 depending controller mode.
+      if code in ('ABS_HAT0X', 'ABS_HAT1X'):
+        if state > 0: return ('dpad_x', 1)
+        if state < 0: return ('dpad_x', -1)
+        return ('dpad_x', 0)
+      if code in ('ABS_HAT0Y', 'ABS_HAT1Y'):
+        if state > 0: return ('dpad_y', 1)
+        if state < 0: return ('dpad_y', -1)
+        return ('dpad_y', 0)
+      if code in ('ABS_GAS', 'ABS_RZ'):
+        return ('rt', state)
+      if code in ('ABS_BRAKE', 'ABS_Z'):
+        return ('lt', state)
+      return (None, None)
+
+    def _next_joint_mode(mainMode, jogMode):
+      if mainMode != 1:
         mainMode = 1
         jogMode = 1
-        grip = 0
-        almStatusLab.config(text='JOGGING JOINTS 1 & 2', style="Warn.TLabel")
-        almStatusLab2.config(text='JOGGING JOINTS 1 & 2', style="Warn.TLabel")
-        #xbcStatusLab.config(text='Xbox ON', )
-        ChgDis(2)
+      else:
+        jogMode += 1
+      if jogMode == 2:
+        _set_status('JOGGING JOINTS 3 & 4')
+      elif jogMode == 3:
+        _set_status('JOGGING JOINTS 5 & 6')
+      else:
+        jogMode = 1
+        _set_status('JOGGING JOINTS 1 & 2')
+      return mainMode, jogMode
+
+    def _next_cart_mode(mainMode, jogMode):
+      if mainMode != 2:
+        mainMode = 2
+        jogMode = 1
+      else:
+        jogMode += 1
+      if jogMode == 2:
+        _set_status('JOGGING Z AXIS')
+      else:
+        jogMode = 1
+        _set_status('JOGGING X & Y AXIS')
+      return mainMode, jogMode
+
+    def _next_tool_mode(mainMode, jogMode):
+      if mainMode != 3:
+        mainMode = 3
+        jogMode = 1
+      else:
+        jogMode += 1
+      if jogMode == 2:
+        _set_status('JOGGING Rz AXIS')
+      else:
+        jogMode = 1
+        _set_status('JOGGING Rx & Ry AXIS')
+      return mainMode, jogMode
+
+    def _handle_dpad(axis, direction, mainMode, jogMode):
+      if direction == 0:
+        return
+      inc = float(incrementEntryField.get())
+      if mainMode == 1:
+        if jogMode == 1 and axis == 'dpad_x' and direction == 1: J1jogNeg(inc)
+        elif jogMode == 1 and axis == 'dpad_x' and direction == -1: J1jogPos(inc)
+        elif jogMode == 1 and axis == 'dpad_y' and direction == -1: J2jogNeg(inc)
+        elif jogMode == 1 and axis == 'dpad_y' and direction == 1: J2jogPos(inc)
+        elif jogMode == 2 and axis == 'dpad_y' and direction == -1: J3jogNeg(inc)
+        elif jogMode == 2 and axis == 'dpad_y' and direction == 1: J3jogPos(inc)
+        elif jogMode == 2 and axis == 'dpad_x' and direction == 1: J4jogNeg(inc)
+        elif jogMode == 2 and axis == 'dpad_x' and direction == -1: J4jogPos(inc)
+        elif jogMode == 3 and axis == 'dpad_y' and direction == -1: J5jogNeg(inc)
+        elif jogMode == 3 and axis == 'dpad_y' and direction == 1: J5jogPos(inc)
+        elif jogMode == 3 and axis == 'dpad_x' and direction == 1: J6jogNeg(inc)
+        elif jogMode == 3 and axis == 'dpad_x' and direction == -1: J6jogPos(inc)
+      elif mainMode == 2:
+        if jogMode == 1 and axis == 'dpad_y' and direction == -1: XjogNeg(inc)
+        elif jogMode == 1 and axis == 'dpad_y' and direction == 1: XjogPos(inc)
+        elif jogMode == 1 and axis == 'dpad_x' and direction == 1: YjogNeg(inc)
+        elif jogMode == 1 and axis == 'dpad_x' and direction == -1: YjogPos(inc)
+        elif jogMode == 2 and axis == 'dpad_y' and direction == 1: ZjogNeg(inc)
+        elif jogMode == 2 and axis == 'dpad_y' and direction == -1: ZjogPos(inc)
+      elif mainMode == 3:
+        if jogMode == 1 and axis == 'dpad_x' and direction == -1: RxjogNeg(inc)
+        elif jogMode == 1 and axis == 'dpad_x' and direction == 1: RxjogPos(inc)
+        elif jogMode == 1 and axis == 'dpad_y' and direction == 1: RyjogNeg(inc)
+        elif jogMode == 1 and axis == 'dpad_y' and direction == -1: RyjogPos(inc)
+        elif jogMode == 2 and axis == 'dpad_x' and direction == 1: RzjogNeg(inc)
+        elif jogMode == 2 and axis == 'dpad_x' and direction == -1: RzjogPos(inc)
+      elif mainMode == 4 and axis == 'dpad_x':
+        if direction == 1: J7jogPos(inc)
+        elif direction == -1: J7jogNeg(inc)
+
+    def threadxbox():
+      if RUN['xboxUse'] == 0:
+        RUN['xboxUse'] = 1
       else:
         RUN['xboxUse'] = 0
-        almStatusLab.config(text='XBOX CONTROLLER OFF', style="Warn.TLabel")
-        almStatusLab2.config(text='XBOX CONTROLLER OFF', style="Warn.TLabel")
-        #xbcStatusLab.config(text='Xbox OFF', )
+        _set_status('CONTROLLER OFF')
+        return
+
+      mainMode = 1
+      jogMode = 1
+      grip = 0
+      last_buttons = {}
+      trigger_latched = {'lt': False, 'rt': False}
+      controller_name = devices.gamepads[0].name if devices.gamepads else 'generic gamepad'
+      logger.info(f"CONTROLLER CONNECTED: {controller_name}")
+      _set_status('JOGGING JOINTS 1 & 2')
+      ChgDis(2)
+
       while RUN['xboxUse'] == 1:
         try:
-        #if (TRUE):
-          events = get_gamepad()
-          for event in events:
-            ##DISTANCE
-            if (event.code == 'ABS_RZ' and event.state >= 100):
-              ChgDis(0)
-            elif (event.code == 'ABS_Z' and event.state >= 100): 
-              ChgDis(1)
-            ##SPEED
-            elif (event.code == 'BTN_TR' and event.state == 1): 
-              ChgSpd(0)
-            elif (event.code == 'BTN_TL' and event.state == 1): 
-              ChgSpd(1)
-            ##JOINT MODE
-            elif (event.code == 'BTN_WEST' and event.state == 1): 
-              if mainMode != 1:
-                mainMode = 1
-                jogMode = 1
-                almStatusLab.config(text='JOGGING JOINTS 1 & 2', style="Warn.TLabel")
-                almStatusLab2.config(text='JOGGING JOINTS 1 & 2', style="Warn.TLabel")
-              else:                
-                jogMode +=1        
-              if jogMode == 2:
-                almStatusLab.config(text='JOGGING JOINTS 3 & 4', style="Warn.TLabel")
-                almStatusLab2.config(text='JOGGING JOINTS 3 & 4', style="Warn.TLabel")
-              elif jogMode == 3:
-                almStatusLab.config(text='JOGGING JOINTS 5 & 6', style="Warn.TLabel")
-                almStatusLab2.config(text='JOGGING JOINTS 5 & 6', style="Warn.TLabel")
-              elif jogMode == 4:
-                jogMode = 1
-                almStatusLab.config(text='JOGGING JOINTS 1 & 2', style="Warn.TLabel")
-                almStatusLab2.config(text='JOGGING JOINTS 1 & 2', style="Warn.TLabel")
-            ##JOINT JOG
-            elif (mainMode == 1 and event.code == 'ABS_HAT0X' and event.state == 1 and jogMode == 1): 
-              J1jogNeg(float(incrementEntryField.get()))    
-            elif (mainMode == 1 and event.code == 'ABS_HAT0X' and event.state == -1 and jogMode == 1): 
-              J1jogPos(float(incrementEntryField.get()))
-            elif (mainMode == 1 and event.code == 'ABS_HAT0Y' and event.state == -1 and jogMode == 1): 
-              J2jogNeg(float(incrementEntryField.get()))    
-            elif (mainMode == 1 and event.code == 'ABS_HAT0Y' and event.state == 1 and jogMode == 1): 
-              J2jogPos(float(incrementEntryField.get()))           
-            elif (mainMode == 1 and event.code == 'ABS_HAT0Y' and event.state == -1 and jogMode == 2): 
-              J3jogNeg(float(incrementEntryField.get()))    
-            elif (mainMode == 1 and event.code == 'ABS_HAT0Y' and event.state == 1 and jogMode == 2): 
-              J3jogPos(float(incrementEntryField.get()))
-            elif (mainMode == 1 and event.code == 'ABS_HAT0X' and event.state == 1 and jogMode == 2): 
-              J4jogNeg(float(incrementEntryField.get()))    
-            elif (mainMode == 1 and event.code == 'ABS_HAT0X' and event.state == -1 and jogMode == 2): 
-              J4jogPos(float(incrementEntryField.get()))           
-            elif (mainMode == 1 and event.code == 'ABS_HAT0Y' and event.state == -1 and jogMode == 3): 
-              J5jogNeg(float(incrementEntryField.get()))    
-            elif (mainMode == 1 and event.code == 'ABS_HAT0Y' and event.state == 1 and jogMode == 3): 
-              J5jogPos(float(incrementEntryField.get()))
-            elif (mainMode == 1 and event.code == 'ABS_HAT0X' and event.state == 1 and jogMode == 3): 
-              J6jogNeg(float(incrementEntryField.get()))    
-            elif (mainMode == 1 and event.code == 'ABS_HAT0X' and event.state == -1 and jogMode == 3): 
-              J6jogPos(float(incrementEntryField.get()))                      
-          ##CARTESIAN DIR MODE
-            elif (event.code == 'BTN_SOUTH' and event.state == 1): 
-              if mainMode != 2:
-                mainMode = 2
-                jogMode = 1
-                almStatusLab.config(text='JOGGING X & Y AXIS', style="Warn.TLabel")
-                almStatusLab2.config(text='JOGGING X & Y AXIS', style="Warn.TLabel")
-              else:                
-                jogMode +=1        
-              if jogMode == 2:
-                almStatusLab.config(text='JOGGING Z AXIS', style="Warn.TLabel")
-                almStatusLab2.config(text='JOGGING Z AXIS', style="Warn.TLabel")
-              elif jogMode == 3:
-                jogMode = 1
-                almStatusLab.config(text='JOGGING X & Y AXIS', style="Warn.TLabel")
-                almStatusLab2.config(text='JOGGING X & Y AXIS', style="Warn.TLabel")
-            ##CARTESIAN DIR JOG
-            elif (mainMode == 2 and event.code == 'ABS_HAT0Y' and event.state == -1 and jogMode == 1): 
-              XjogNeg(float(incrementEntryField.get()))    
-            elif (mainMode == 2 and event.code == 'ABS_HAT0Y' and event.state == 1 and jogMode == 1): 
-              XjogPos(float(incrementEntryField.get()))
-            elif (mainMode == 2 and event.code == 'ABS_HAT0X' and event.state == 1 and jogMode == 1): 
-              YjogNeg(float(incrementEntryField.get()))    
-            elif (mainMode == 2 and event.code == 'ABS_HAT0X' and event.state == -1 and jogMode == 1): 
-              YjogPos(float(incrementEntryField.get()))           
-            elif (mainMode == 2 and event.code == 'ABS_HAT0Y' and event.state == 1 and jogMode == 2): 
-              ZjogNeg(float(incrementEntryField.get()))    
-            elif (mainMode == 2 and event.code == 'ABS_HAT0Y' and event.state == -1 and jogMode == 2): 
-              ZjogPos(float(incrementEntryField.get()))                          
-          ##CARTESIAN ORIENTATION MODE
-            elif (event.code == 'BTN_EAST' and event.state == 1): 
-              if mainMode != 3:
-                mainMode = 3
-                jogMode = 1
-                almStatusLab.config(text='JOGGING Rx & Ry AXIS', style="Warn.TLabel")
-                almStatusLab2.config(text='JOGGING Rx & Ry AXIS', style="Warn.TLabel")
-              else:                
-                jogMode +=1        
-              if jogMode == 2:
-                almStatusLab.config(text='JOGGING Rz AXIS', style="Warn.TLabel")
-                almStatusLab2.config(text='JOGGING Rz AXIS', style="Warn.TLabel")
-              elif jogMode == 3:
-                jogMode = 1
-                almStatusLab.config(text='JOGGING Rx & Ry AXIS', style="Warn.TLabel")
-                almStatusLab2.config(text='JOGGING Rx & Ry AXIS', style="Warn.TLabel")
-            ##CARTESIAN ORIENTATION JOG
-            elif (mainMode == 3 and event.code == 'ABS_HAT0X' and event.state == -1 and jogMode == 1): 
-              RxjogNeg(float(incrementEntryField.get()))    
-            elif (mainMode == 3 and event.code == 'ABS_HAT0X' and event.state == 1 and jogMode == 1): 
-              RxjogPos(float(incrementEntryField.get()))
-            elif (mainMode == 3 and event.code == 'ABS_HAT0Y' and event.state == 1 and jogMode == 1): 
-              RyjogNeg(float(incrementEntryField.get()))    
-            elif (mainMode == 3 and event.code == 'ABS_HAT0Y' and event.state == -1 and jogMode == 1): 
-              RyjogPos(float(incrementEntryField.get()))           
-            elif (mainMode == 3 and event.code == 'ABS_HAT0X' and event.state == 1 and jogMode == 2): 
-              RzjogNeg(float(incrementEntryField.get()))    
-            elif (mainMode == 3 and event.code == 'ABS_HAT0X' and event.state == -1 and jogMode == 2): 
-              RzjogPos(float(incrementEntryField.get()))
-            ##J7 MODE
-            elif (event.code == 'BTN_START' and event.state == 1): 
-              mainMode = 4
-              almStatusLab.config(text='JOGGING TRACK', style="Warn.TLabel")
-              almStatusLab2.config(text='JOGGING TRACK', style="Warn.TLabel")
-            ##TRACK JOG
-            elif (mainMode == 4 and event.code == 'ABS_HAT0X' and event.state == 1): 
-              J7jogPos(float(incrementEntryField.get()))    
-            elif (mainMode == 4 and event.code == 'ABS_HAT0X' and event.state == -1): 
-              J7jogNeg(float(incrementEntryField.get()))                   
-            ##TEACH POS          
-            elif (event.code == 'BTN_NORTH' and event.state == 1): 
-              teachInsertBelSelected()
-            ##GRIPPER         
-            elif (event.code == 'BTN_SELECT' and event.state == 1): 
-              if grip == 0:
-                grip = 1
-                outputNum = DO1offEntryField.get()
-                command = "OFX"+outputNum+"\n"
-                RUN['ser2'].write(command.encode())
-                RUN['ser2'].flushInput()
-                time.sleep(.1)
-                RUN['ser2'].read() 
-              else:
-                grip = 0
-                outputNum = DO1onEntryField.get()
-                command = "ONX"+outputNum+"\n"
-                RUN['ser2'].write(command.encode())
-                RUN['ser2'].flushInput()
-                time.sleep(.1)
-                RUN['ser2'].read()     
-                time.sleep(.1)
-            else:
-              pass   
-        except:
-        #else:
-          almStatusLab.config(text='XBOX CONTROLLER NOT RESPONDING', style="Alarm.TLabel")
-          almStatusLab2.config(text='XBOX CONTROLLER NOT RESPONDING', style="Alarm.TLabel")        
-    t = threading.Thread(target=threadxbox)
+          for event in _read_controller_events():
+            btn = _button_name(event.code)
+            if btn:
+              pressed = int(event.state) == 1
+              was_pressed = last_buttons.get(btn, False)
+              last_buttons[btn] = pressed
+              if not pressed or was_pressed:
+                continue
+              if btn == 'west':
+                mainMode, jogMode = _next_joint_mode(mainMode, jogMode)
+              elif btn == 'south':
+                mainMode, jogMode = _next_cart_mode(mainMode, jogMode)
+              elif btn == 'east':
+                mainMode, jogMode = _next_tool_mode(mainMode, jogMode)
+              elif btn == 'north':
+                teachInsertBelSelected()
+              elif btn == 'start':
+                mainMode = 4
+                _set_status('JOGGING TRACK')
+              elif btn == 'rb':
+                ChgSpd(0)
+              elif btn == 'lb':
+                ChgSpd(1)
+              elif btn == 'rt_btn':
+                ChgDis(0)
+              elif btn == 'lt_btn':
+                ChgDis(1)
+              elif btn == 'select':
+                try:
+                  if grip == 0:
+                    grip = 1
+                    outputNum = DO1offEntryField.get()
+                    command = "OFX"+outputNum+"\n"
+                  else:
+                    grip = 0
+                    outputNum = DO1onEntryField.get()
+                    command = "ONX"+outputNum+"\n"
+                  RUN['ser2'].write(command.encode())
+                  RUN['ser2'].flushInput()
+                  time.sleep(.1)
+                  RUN['ser2'].read()
+                except Exception as e:
+                  logger.error(f"CONTROLLER GRIPPER COMMAND FAILED: {e}")
+              continue
+
+            axis, value = _axis_dir(event.code, event.state)
+            if axis in ('dpad_x', 'dpad_y'):
+              _handle_dpad(axis, value, mainMode, jogMode)
+            elif axis == 'rt':
+              if value < 30:
+                trigger_latched['rt'] = False
+              elif value >= 180 and not trigger_latched['rt']:
+                trigger_latched['rt'] = True
+                ChgDis(0)
+            elif axis == 'lt':
+              if value < 30:
+                trigger_latched['lt'] = False
+              elif value >= 180 and not trigger_latched['lt']:
+                trigger_latched['lt'] = True
+                ChgDis(1)
+        except Exception as e:
+          logger.error(f"CONTROLLER NOT RESPONDING: {e}")
+          _set_status('CONTROLLER NOT RESPONDING', style="Alarm.TLabel")
+          time.sleep(0.2)
+    t = threading.Thread(target=threadxbox, daemon=True)
     t.start()
 
-  def ChgDis(val):
-    curSpd = int(incrementEntryField.get())
-    if curSpd >=100 and val == 0:
-      curSpd = 100 
-    elif curSpd < 5 and val == 0:  
-      curSpd += 1
-    elif val == 0:
-      curSpd += 5   
-    if curSpd <=1 and val == 1:
-      curSpd = 1 
-    elif curSpd <= 5 and val == 1:  
-      curSpd -= 1
-    elif val == 1:
-      curSpd -= 5
-    elif val == 2:
-      curSpd = 5  
-    incrementEntryField.delete(0, 'end')
-    incrementEntryField.insert(0,str(curSpd))
+##end xbox
 
-    time.sleep(.3)  
+def _set_alarm(message):
+    logger.error(message)
+    try:
+        almStatusLab.config(text=message, style="Alarm.TLabel")
+        almStatusLab2.config(text=message, style="Alarm.TLabel")
+    except Exception:
+        pass
 
-  def ChgSpd(val):
-    curSpd = int(speedEntryField.get())
-    if curSpd >=100 and val == 0:
-      curSpd = 100 
-    elif curSpd < 5 and val == 0:  
-      curSpd += 1
-    elif val == 0:
-      curSpd += 5   
-    if curSpd <=1 and val == 1:
-      curSpd = 1 
-    elif curSpd <= 5 and val == 1:  
-      curSpd -= 1
-    elif val == 1:
-      curSpd -= 5
-    elif val == 2:
-      curSpd = 5  
-    speedEntryField.delete(0, 'end')    
-    speedEntryField.insert(0,str(curSpd))  
+def _joint_limit(joint_num, direction, current, step):
+    """Clamp incremental joint jogs to configured software limits."""
+    try:
+        current = float(current)
+        step = abs(float(step))
+        pos_lim = float(CAL[f'J{joint_num}PosLim'])
+        neg_lim = -float(CAL[f'J{joint_num}NegLim'])
+    except Exception as e:
+        _set_alarm(f"J{joint_num} limit check failed: {e}")
+        return None
 
+    if direction > 0:
+        remaining = pos_lim - current
+        if remaining <= 0:
+            _set_alarm(f"J{joint_num} positive limit reached ({pos_lim})")
+            return None
+        return min(step, remaining)
 
-##end xbox ###################################################################################################################################################
+    remaining = current - neg_lim
+    if remaining <= 0:
+        _set_alarm(f"J{joint_num} negative limit reached ({neg_lim})")
+        return None
+    return min(step, remaining)
 
 def send_serial_command(cmd):
-    #global progRunning
-    RUN['ser'].write(cmd.encode())    
-    RUN['ser'].flushInput()
-    time.sleep(0.1)
-    response = str(RUN['ser'].readline().strip(), 'utf-8')
-    IncJogStatVal = int(RUN['IncJogStat'].get())
-    if IncJogStatVal or RUN['progRunning']:
-      if response[:1] == 'E':
-        ErrorHandler(response)
-      else:
-        displayPosition(response) 		
-
-
+    try:
+        ser = RUN.get('ser')
+        if ser is None or not getattr(ser, 'is_open', False):
+            _set_alarm("Serial port not open")
+            return None
+        ser.write(cmd.encode())
+        try:
+            ser.reset_input_buffer()
+        except Exception:
+            ser.flushInput()
+        time.sleep(0.1)
+        raw = ser.readline()
+        if not raw:
+            _set_alarm("No response from Teensy controller")
+            return None
+        response = str(raw.strip(), 'utf-8')
+        IncJogStatVal = int(RUN['IncJogStat'].get())
+        if (IncJogStatVal == 0):
+            displayPosition(response)
+        else:
+            ErrorHandler(response)
+        return response
+    except serial.SerialException as e:
+        _set_alarm(f"Serial communication error: {e}")
+        try:
+            RUN['ser_was_connected'] = False
+        except Exception:
+            pass
+        return None
+    except Exception as e:
+        _set_alarm(f"Serial command failed: {e}")
+        return None
 
 def start_send_serial_thread(command):
-    #global progRunning
     if serial_lock.locked():
         logger.warning("Serial command already in progress — ignoring.")
         return
-    t = threading.Thread(target=run_send_serial_safe, args=(command,), daemon=True)
+
+    def thread_wrapper():
+        with serial_lock:
+            send_serial_command(command)
+
+    t = threading.Thread(target=thread_wrapper, daemon=True)
     t.start()
 
-def run_send_serial_safe(command):
-    #global progRunning
-    with serial_lock:
-        cmdSentEntryField.delete(0, 'end')
-        cmdSentEntryField.insert(0, command)
-        send_serial_command(command)
-       
-
- 
 def J1jogNeg(value):
   # global RUN['xboxUse']
   # global RUN['VR_angles']
   #global offlineMode
   checkSpeedVals()
+  value = _joint_limit(1, -1, CAL['J1AngCur'], value)
+  if value is None:
+    return
   if RUN['xboxUse'] != 1:
     almStatusLab.config(text="SYSTEM READY",  style="OK.TLabel")
     almStatusLab2.config(text="SYSTEM READY",  style="OK.TLabel")
@@ -4969,6 +5062,9 @@ def J1jogPos(value):
   # global RUN['VR_angles']
   #global offlineMode
   checkSpeedVals()
+  value = _joint_limit(1, 1, CAL['J1AngCur'], value)
+  if value is None:
+    return
   if RUN['xboxUse'] != 1:
     almStatusLab.config(text="SYSTEM READY",  style="OK.TLabel")
     almStatusLab2.config(text="SYSTEM READY",  style="OK.TLabel")
@@ -5005,6 +5101,9 @@ def J2jogNeg(value):
   # global RUN['VR_angles']
   #global offlineMode
   checkSpeedVals()
+  value = _joint_limit(2, -1, CAL['J2AngCur'], value)
+  if value is None:
+    return
   if RUN['xboxUse'] != 1:
     almStatusLab.config(text="SYSTEM READY",  style="OK.TLabel")
     almStatusLab2.config(text="SYSTEM READY",  style="OK.TLabel")
@@ -5042,6 +5141,9 @@ def J2jogPos(value):
   # global RUN['VR_angles']
   #global offlineMode
   checkSpeedVals()
+  value = _joint_limit(2, 1, CAL['J2AngCur'], value)
+  if value is None:
+    return
   if RUN['xboxUse'] != 1:
     almStatusLab.config(text="SYSTEM READY",  style="OK.TLabel")
     almStatusLab2.config(text="SYSTEM READY",  style="OK.TLabel")
@@ -5077,6 +5179,9 @@ def J3jogNeg(value):
   # global RUN['VR_angles']
   #global offlineMode
   checkSpeedVals()
+  value = _joint_limit(3, -1, CAL['J3AngCur'], value)
+  if value is None:
+    return
   if RUN['xboxUse'] != 1:
     almStatusLab.config(text="SYSTEM READY",  style="OK.TLabel")
     almStatusLab2.config(text="SYSTEM READY",  style="OK.TLabel")
@@ -5112,6 +5217,9 @@ def J3jogPos(value):
   # global RUN['VR_angles']
   #global offlineMode
   checkSpeedVals()
+  value = _joint_limit(3, 1, CAL['J3AngCur'], value)
+  if value is None:
+    return
   if RUN['xboxUse'] != 1:
     almStatusLab.config(text="SYSTEM READY",  style="OK.TLabel")
     almStatusLab2.config(text="SYSTEM READY",  style="OK.TLabel")
@@ -5147,6 +5255,9 @@ def J4jogNeg(value):
   # global RUN['VR_angles']
   #global offlineMode
   checkSpeedVals()
+  value = _joint_limit(4, -1, CAL['J4AngCur'], value)
+  if value is None:
+    return
   if RUN['xboxUse'] != 1:
     almStatusLab.config(text="SYSTEM READY",  style="OK.TLabel")
     almStatusLab2.config(text="SYSTEM READY",  style="OK.TLabel")
@@ -5182,6 +5293,9 @@ def J4jogPos(value):
   # global RUN['VR_angles']
   #global offlineMode
   checkSpeedVals()
+  value = _joint_limit(4, 1, CAL['J4AngCur'], value)
+  if value is None:
+    return
   if RUN['xboxUse'] != 1:
     almStatusLab.config(text="SYSTEM READY",  style="OK.TLabel")
     almStatusLab2.config(text="SYSTEM READY",  style="OK.TLabel")
@@ -5217,6 +5331,9 @@ def J5jogNeg(value):
   # global RUN['VR_angles']
   #global offlineMode
   checkSpeedVals()
+  value = _joint_limit(5, -1, CAL['J5AngCur'], value)
+  if value is None:
+    return
   if RUN['xboxUse'] != 1:
     almStatusLab.config(text="SYSTEM READY",  style="OK.TLabel")
     almStatusLab2.config(text="SYSTEM READY",  style="OK.TLabel")
@@ -5252,6 +5369,9 @@ def J5jogPos(value):
   # global RUN['VR_angles']
   #global offlineMode
   checkSpeedVals()
+  value = _joint_limit(5, 1, CAL['J5AngCur'], value)
+  if value is None:
+    return
   if RUN['xboxUse'] != 1:
     almStatusLab.config(text="SYSTEM READY",  style="OK.TLabel")
     almStatusLab2.config(text="SYSTEM READY",  style="OK.TLabel")
@@ -5287,6 +5407,9 @@ def J6jogNeg(value):
   # global RUN['VR_angles']
   #global offlineMode
   checkSpeedVals()
+  value = _joint_limit(6, -1, CAL['J6AngCur'], value)
+  if value is None:
+    return
   if RUN['xboxUse'] != 1:
     almStatusLab.config(text="SYSTEM READY",  style="OK.TLabel")
     almStatusLab2.config(text="SYSTEM READY",  style="OK.TLabel")
@@ -5322,6 +5445,9 @@ def J6jogPos(value):
   # global RUN['VR_angles']
   #global offlineMode
   checkSpeedVals()
+  value = _joint_limit(6, 1, CAL['J6AngCur'], value)
+  if value is None:
+    return
   if RUN['xboxUse'] != 1:
     almStatusLab.config(text="SYSTEM READY",  style="OK.TLabel")
     almStatusLab2.config(text="SYSTEM READY",  style="OK.TLabel")
@@ -5799,14 +5925,8 @@ def StopJog(self):
       command = "S\n"
       IncJogStatVal = int(RUN['IncJogStat'].get())
       if (IncJogStatVal == 0):
-        RUN['ser'].write(command.encode()) 
-        RUN['ser'].flushInput()
-        time.sleep(.05)
-        response = str(RUN['ser'].readline().strip(),'utf-8')
-        if (response[:1] == 'E'):
-          ErrorHandler(response)    
-        else:
-          displayPosition(response)
+        response = send_serial_command(command)
+        if response and response[:1] != 'E':
           RUN['VR_angles'] = [float(CAL['J1AngCur']), float(CAL['J2AngCur']), float(CAL['J3AngCur']), float(CAL['J4AngCur']), float(CAL['J5AngCur']), float(CAL['J6AngCur'])]
           setStepMonitorsVR()   
     else:
@@ -9024,6 +9144,16 @@ def CalRestPos():
 
 def displayPosition(response):
   # global WC, RUN['VR_angles'] 
+  if not response or response[:1] == 'E':
+    if response:
+      ErrorHandler(response)
+    else:
+      _set_alarm("Empty position response from Teensy controller")
+    return False
+  required = 'ABCDEFGHIJKLMNOPQR'
+  if any(response.find(ch) < 0 for ch in required):
+    _set_alarm(f"Invalid position response from Teensy controller: {response!r}")
+    return False
 
   cmdRecEntryField.delete(0, 'end')
   cmdRecEntryField.insert(0,response)
@@ -9782,6 +9912,7 @@ def checkSpeedVals():
     ACCrampField.insert(0,"50")
 
 
+  return True
 
 def ErrorHandler(response):
   #global estopActive
